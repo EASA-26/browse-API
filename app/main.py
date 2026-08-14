@@ -5,6 +5,7 @@ metasearch backend); remaining verticals answer 501 until the commercial
 provider is configured.
 """
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
@@ -15,22 +16,40 @@ from fastapi.responses import JSONResponse
 from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
 from app.api.verticals import router as verticals_router
+from app.cache import MemoryResponseCache
 from app.config import get_settings
-from app.db import Database
+from app.db import create_database
 from app.engine_health import get_engine_monitor, probe_loop
 from app.logging_config import setup_logging
 from app.policy import PolicyBlockedError
+from app.ratelimit import MemoryRateLimiter
 
 setup_logging(get_settings().log_level)
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    db = Database(settings.database_url)
+    db = create_database(settings.database_url)
     await db.connect()
     app.state.db = db
-    app.state.redis = aioredis.from_url(settings.redis_url)
+    if settings.redis_disabled:
+        # Zero-container mode: no Redis process exists. The cache and limiter
+        # live here for the lifetime of the app, exactly as the Redis client
+        # otherwise would -- per-request state has to outlive requests.
+        logger.info(
+            "zero-container mode: in-process cache and rate limiter "
+            "(single worker only)"
+        )
+        app.state.redis = None
+        app.state.cache = MemoryResponseCache()
+        app.state.limiter = MemoryRateLimiter(
+            settings.rate_limit_qps, settings.rate_limit_burst
+        )
+    else:
+        app.state.redis = aioredis.from_url(settings.redis_url)
     probe_task: asyncio.Task[None] | None = None
     if settings.engine_probe_interval > 0:
         probe_task = asyncio.create_task(
@@ -41,7 +60,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         probe_task.cancel()
         with suppress(asyncio.CancelledError):
             await probe_task
-    await app.state.redis.aclose()
+    if app.state.redis is not None:
+        await app.state.redis.aclose()
     await db.close()
 
 

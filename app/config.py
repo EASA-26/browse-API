@@ -142,6 +142,17 @@ class Settings(BaseSettings):
 
     direct_scrape_enabled: bool = False
 
+    @property
+    def redis_disabled(self) -> bool:
+        """Whether this deployment runs without Redis at all.
+
+        Only the explicit REDIS_URL=memory:// selects the in-process cache and
+        rate limiter -- the zero-container mode. An empty URL stays an error,
+        as it always was: silence must not switch modes. Single worker process
+        only; the Redis backing is what makes those safe across several.
+        """
+        return self.redis_url.strip() == "memory://"
+
     def provider_for(self, vertical: Vertical) -> ProviderName:
         return self.provider_map.get(vertical, DEFAULT_PROVIDER_MAP[vertical])
 

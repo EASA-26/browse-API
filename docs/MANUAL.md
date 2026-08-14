@@ -121,6 +121,28 @@ curl http://localhost:8000/health/deps
 docker compose exec api python -m app.cli create-key --name my-service
 ```
 
+### Zero-container mode (Windows-native)
+
+For hosts that cannot run containers at all (for example a VM without nested
+virtualization). The API runs as a plain Python process; SQLite replaces
+Postgres and an in-process cache and rate limiter replace Redis:
+
+```powershell
+py -3.12 -m venv .venv; .\.venv\Scripts\pip install -e .
+$env:DATABASE_URL = "sqlite:///C:/gen-api/data/gen.db"
+$env:REDIS_URL = "memory://"
+$env:SEARXNG_URL = "http://localhost:8080"   # SearXNG runs natively or on another host
+.\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python -m app.cli create-key --name my-service
+```
+
+Constraints, honestly stated: one worker process only (the in-process cache
+and limiter are not shared across workers -- the Redis backing is what makes
+them safe across several); SearXNG is not bundled by this mode and must be
+provided natively or from another host; `/health/deps` reports
+`redis: "disabled"` here, which is healthy. The Docker path is unchanged and
+remains the recommended deployment wherever containers are possible.
+
 ### Verify
 
 | URL | Expect |
@@ -158,7 +180,7 @@ All settings come from environment variables / `.env`, parsed by
 | `APP_ENV` | `dev` | Environment label (informational) |
 | `LOG_LEVEL` | `INFO` | Root log level |
 | `HTTP_TIMEOUT` | `10.0` | Seconds, all upstream HTTP calls |
-| `REDIS_URL` | `redis://redis:6379/0` | Cache + rate limit + pacing |
+| `REDIS_URL` | `redis://redis:6379/0` | Cache + rate limit (`memory://` selects the in-process zero-container mode) |
 | `DATABASE_URL` | `postgresql://gen:gen@postgres:5432/gen` | Keys, credits, usage |
 | `SEARXNG_URL` | `http://searxng:8080` | GenXNG backend (in-network) |
 

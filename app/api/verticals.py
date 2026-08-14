@@ -11,13 +11,13 @@ from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import ProviderFactory, get_db, get_policy, get_provider_factory, get_redis
 from app.auth import require_api_key
-from app.cache import ResponseCache, build_cache_key
+from app.cache import CacheBackend, ResponseCache, build_cache_key
 from app.config import ProviderName, Vertical, get_settings
-from app.db import ApiKey, Database
+from app.db import ApiKey, DatabaseBackend
 from app.metrics import (
     CACHE_REQUESTS,
     DEGRADED_RESPONSES,
@@ -36,7 +36,7 @@ from app.providers.base import (
     SearchProvider,
     UnsupportedVerticalError,
 )
-from app.ratelimit import RateLimiter
+from app.ratelimit import LimiterBackend, RateLimiter
 from app.schemas import (
     AutocompleteResponse,
     BaseSearchResponse,
@@ -150,11 +150,12 @@ async def _enrich_search(
 
 
 async def handle_vertical(
+    request: Request,
     vertical: Vertical,
     body: SearchRequest,
     api_key: ApiKey,
-    db: Database,
-    redis_client: aioredis.Redis,
+    db: DatabaseBackend,
+    redis_client: aioredis.Redis | None,
     provider_factory: ProviderFactory,
     policy: PolicyGate,
 ) -> BaseSearchResponse:
@@ -180,7 +181,15 @@ async def handle_vertical(
             )
             raise PolicyBlockedError(category)
 
-        limiter = RateLimiter(redis_client, settings.rate_limit_qps, settings.rate_limit_burst)
+        # Redis-backed per request, or the lifespan's in-process twins when the
+        # zero-container mode left no Redis to wrap.
+        limiter: LimiterBackend
+        if redis_client is None:
+            limiter = request.app.state.limiter
+        else:
+            limiter = RateLimiter(
+                redis_client, settings.rate_limit_qps, settings.rate_limit_burst
+            )
         allowed, retry_after = await limiter.check(api_key.id)
         if not allowed:
             status = "rate_limited"
@@ -198,7 +207,11 @@ async def handle_vertical(
                 detail=f"Insufficient credits: balance {api_key.credits}, cost {cost}",
             )
 
-        cache = ResponseCache(redis_client)
+        cache: CacheBackend
+        if redis_client is None:
+            cache = request.app.state.cache
+        else:
+            cache = ResponseCache(redis_client)
         cache_key = build_cache_key(vertical, body)
         cached = await cache.get(cache_key)
         served_from_cache = cached is not None
@@ -332,15 +345,16 @@ Endpoint = Callable[..., Coroutine[Any, Any, BaseSearchResponse]]
 
 def _make_endpoint(vertical: Vertical) -> Endpoint:
     async def endpoint(
+        request: Request,
         body: SearchRequest,
         api_key: Annotated[ApiKey, Depends(require_api_key)],
-        db: Annotated[Database, Depends(get_db)],
-        redis_client: Annotated[aioredis.Redis, Depends(get_redis)],
+        db: Annotated[DatabaseBackend, Depends(get_db)],
+        redis_client: Annotated[aioredis.Redis | None, Depends(get_redis)],
         provider_factory: Annotated[ProviderFactory, Depends(get_provider_factory)],
         policy: Annotated[PolicyGate, Depends(get_policy)],
     ) -> BaseSearchResponse:
         return await handle_vertical(
-            vertical, body, api_key, db, redis_client, provider_factory, policy
+            request, vertical, body, api_key, db, redis_client, provider_factory, policy
         )
 
     endpoint.__name__ = vertical.value

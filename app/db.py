@@ -1,5 +1,7 @@
-"""PostgreSQL access: API keys now, credit accounting and usage logs in Phase 4."""
+"""SQL datastore: the DatabaseBackend contract, the asyncpg implementation, and
+the create_database factory (sqlite:// DSNs get the zero-container backend)."""
 import secrets as pysecrets
+from typing import Protocol
 
 import asyncpg
 from pydantic import BaseModel
@@ -32,6 +34,35 @@ class ApiKey(BaseModel):
     id: int
     name: str
     credits: int
+
+
+class DatabaseBackend(Protocol):
+    """What the app needs from a datastore -- four queries and a lifecycle.
+
+    The endpoint tests have always duck-typed this surface with a FakeDB; the
+    protocol writes that contract down so a second backend can implement it
+    honestly under mypy strict.
+    """
+
+    async def connect(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+    async def fetch_api_key(self, key: str) -> ApiKey | None: ...
+
+    async def create_api_key(self, name: str, credits: int = 10000) -> str: ...
+
+    async def deduct_credits(self, key_id: int, cost: int) -> bool: ...
+
+    async def log_usage(
+        self,
+        key_id: int,
+        vertical: str,
+        credits: int,
+        provider: str,
+        cached: bool,
+        latency_ms: int,
+    ) -> None: ...
 
 
 class Database:
@@ -98,3 +129,17 @@ class Database:
             cached,
             latency_ms,
         )
+
+
+def create_database(dsn: str) -> DatabaseBackend:
+    """The backend a DSN names: sqlite:// gets SQLite, everything else Postgres.
+
+    SQLite is the zero-container mode for hosts that cannot run Docker at all
+    (no nested virtualization); the Postgres path is untouched and remains the
+    default for the compose deployment.
+    """
+    if dsn.startswith("sqlite:"):
+        from app.db_sqlite import SqliteDatabase
+
+        return SqliteDatabase(dsn)
+    return Database(dsn)

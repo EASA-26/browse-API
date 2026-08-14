@@ -9,3 +9,9 @@ __pycache__/
 dist/
 build/
 pgdata/
+data/
+native-test/
+*.db
+*.db-shm
+*.db-wal
+docker-compose.override.yml

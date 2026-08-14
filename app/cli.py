@@ -1,16 +1,20 @@
 """Admin CLI. Run inside the api container:
 
     docker compose exec api python -m app.cli create-key --name rag-service
+
+or directly on a zero-container host, where DATABASE_URL names a sqlite file:
+
+    python -m app.cli create-key --name rag-service
 """
 import argparse
 import asyncio
 
 from app.config import get_settings
-from app.db import Database
+from app.db import create_database
 
 
 async def _create_key(name: str, credits: int) -> str:
-    db = Database(get_settings().database_url)
+    db = create_database(get_settings().database_url)
     await db.connect()
     try:
         return await db.create_api_key(name, credits)

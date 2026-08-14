@@ -1,6 +1,11 @@
-"""Per-key token-bucket rate limiter, atomic via a Redis Lua script."""
+"""Per-key token-bucket rate limiter.
+
+Redis-backed and atomic via a Lua script for the compose deployment; an
+in-process twin for the zero-container mode. LimiterBackend is the contract.
+"""
 import math
 import time
+from typing import Protocol
 
 import redis.asyncio as aioredis
 
@@ -31,6 +36,10 @@ return {allowed, retry}
 """
 
 
+class LimiterBackend(Protocol):
+    async def check(self, key_id: int, now_ms: int | None = None) -> tuple[bool, int]: ...
+
+
 class RateLimiter:
     def __init__(self, client: aioredis.Redis, qps: float, burst: int) -> None:
         self._client = client
@@ -52,3 +61,32 @@ class RateLimiter:
 def retry_after_ceiling(qps: float) -> int:
     """Smallest sensible Retry-After for a given refill rate."""
     return max(1, math.ceil(1 / qps)) if qps > 0 else 1
+
+
+class MemoryRateLimiter:
+    """The same token bucket, in process memory for the zero-container mode.
+
+    The Lua script exists to make read-modify-write atomic across workers;
+    inside one asyncio event loop the whole calculation is synchronous, so a
+    plain dict is already atomic. Single worker process only -- the Redis
+    limiter remains the one that is safe across several.
+    """
+
+    def __init__(self, qps: float, burst: int) -> None:
+        self._qps = qps
+        self._burst = max(burst, 1)
+        self._buckets: dict[int, tuple[float, int]] = {}
+
+    async def check(self, key_id: int, now_ms: int | None = None) -> tuple[bool, int]:
+        """Consume one token. Returns (allowed, retry_after_seconds)."""
+        if self._qps <= 0:
+            return True, 0
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+        tokens, ts = self._buckets.get(key_id, (float(self._burst), now_ms))
+        tokens = min(float(self._burst), tokens + (now_ms - ts) / 1000.0 * self._qps)
+        if tokens >= 1:
+            self._buckets[key_id] = (tokens - 1, now_ms)
+            return True, 0
+        self._buckets[key_id] = (tokens, now_ms)
+        return False, max(math.ceil((1 - tokens) / self._qps), 1)
