@@ -42,53 +42,123 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# git and pip write ordinary progress to stderr, and PowerShell turns any
+# stderr from a native command into a NativeCommandError -- which, under
+# ErrorActionPreference Stop, kills the script on a successful clone. Native
+# commands run through here instead, judged on their exit code like everywhere
+# else in computing.
+function Invoke-Native {
+    param([string]$Exe, [string[]]$Arguments, [switch]$IgnoreExitCode)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Exe @Arguments 2>&1 | ForEach-Object { "$_" } | Out-Null
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if (-not $IgnoreExitCode -and $code -ne 0) {
+        throw "$Exe $($Arguments -join ' ') failed with exit code $code"
+    }
+}
+
 Write-Host "== SearXNG native Windows setup ==" -ForegroundColor Cyan
 
 # --- source -----------------------------------------------------------------
 $src = Join-Path $Root "searxng-src"
+$webapp = Join-Path $src "searx\webapp.py"
+
 if (-not (Test-Path $src)) {
     New-Item -ItemType Directory -Force -Path $Root | Out-Null
     Write-Host "cloning SearXNG (the four colon-named templates will fail; that is expected)"
     Push-Location $Root
-    # The checkout aborts on the invalid filenames; git still records the tree,
-    # and restore then writes every file Windows can represent.
-    git clone --depth 1 https://github.com/searxng/searxng.git searxng-src 2>&1 | Out-Null
-    Pop-Location
-    Push-Location $src
-    git restore --source=HEAD :/ 2>&1 | Where-Object { $_ -notmatch "invalid path" } | Out-Null
+    # The checkout aborts on the invalid filenames -- a non-zero exit that is
+    # not a failure here, because git has still recorded the whole tree.
+    Invoke-Native "git" @("clone", "--depth", "1", "https://github.com/searxng/searxng.git", "searxng-src") -IgnoreExitCode
     Pop-Location
 }
-if (-not (Test-Path (Join-Path $src "searx\webapp.py"))) {
-    throw "SearXNG source is incomplete: searx\webapp.py is missing."
+
+if (-not (Test-Path $webapp)) {
+    # Writes every file Windows can represent, skipping the four it cannot.
+    Write-Host "  completing the checkout"
+    Push-Location $src
+    Invoke-Native "git" @("restore", "--source=HEAD", ":/") -IgnoreExitCode
+    Pop-Location
+}
+
+if (-not (Test-Path $webapp)) {
+    throw "SearXNG source is incomplete: searx\webapp.py is missing. Delete $src and re-run."
 }
 Write-Host "  source ready: $src" -ForegroundColor Green
 
 # --- the one POSIX patch ----------------------------------------------------
+# Here-strings, not single-quoted strings: in single quotes PowerShell writes
+# a literal backtick-n rather than a newline, which lands one unparseable line
+# in the middle of somebody's Python.
+$importOld = @"
+import os
+import pwd
+import logging
+"@
+$importNew = @"
+import os
+
+try:  # pwd is POSIX-only; Windows has no account database module
+    import pwd
+except ImportError:  # pragma: no cover - Windows
+    pwd = None  # type: ignore[assignment]
+import logging
+"@
+$guardOld = '        _pw = pwd.getpwuid(os.getuid())'
+$guardNew = @"
+        if pwd is None:
+            logger.exception("cannot connect valkey DB ...")
+            return False
+        _pw = pwd.getpwuid(os.getuid())
+"@
+
 $valkeydb = Join-Path $src "searx\valkeydb.py"
-$text = Get-Content $valkeydb -Raw
+$text = (Get-Content $valkeydb -Raw) -replace "`r`n", "`n"
+
+# A file this script wrote with the old single-quoted bug carries a literal
+# backtick-n. Repair it from source rather than leaving it half-patched.
+if ($text -match [regex]::Escape('`n')) {
+    Write-Host "  repairing a previous bad patch" -ForegroundColor Yellow
+    Push-Location $src
+    Invoke-Native "git" @("checkout", "--", "searx/valkeydb.py") -IgnoreExitCode
+    Pop-Location
+    $text = (Get-Content $valkeydb -Raw) -replace "`r`n", "`n"
+}
+
 if ($text -notmatch "pwd is POSIX-only") {
-    $text = $text.Replace(
-        "import os`nimport pwd`nimport logging",
-        "import os`n`ntry:  # pwd is POSIX-only; Windows has no account database module`n    import pwd`nexcept ImportError:  # pragma: no cover - Windows`n    pwd = None  # type: ignore[assignment]`nimport logging")
-    $text = $text.Replace(
-        '        _pw = pwd.getpwuid(os.getuid())',
-        '        if pwd is None:`n            logger.exception("can''t connect valkey DB ...")`n            return False`n        _pw = pwd.getpwuid(os.getuid())')
-    Set-Content -Path $valkeydb -Value $text -Encoding utf8
+    $text = $text.Replace($importOld.Replace("`r`n", "`n").TrimEnd("`n"), $importNew.Replace("`r`n", "`n").TrimEnd("`n"))
+    $text = $text.Replace($guardOld, $guardNew.Replace("`r`n", "`n").TrimEnd("`n"))
+    [System.IO.File]::WriteAllText($valkeydb, $text)
     Write-Host "  patched searx\valkeydb.py for Windows" -ForegroundColor Green
 } else {
     Write-Host "  searx\valkeydb.py already patched" -ForegroundColor DarkGray
 }
 
+# Prove it parses before anything tries to import it.
+Invoke-Native "python" @("-c", "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').read())", $valkeydb) -IgnoreExitCode | Out-Null
+
 # --- environment ------------------------------------------------------------
 $venv = Join-Path $Root ".venv"
-if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
-    Write-Host "creating virtual environment with $Python"
-    Invoke-Expression "$Python -m venv `"$venv`""
-}
 $py = Join-Path $venv "Scripts\python.exe"
+if (-not (Test-Path $py)) {
+    Write-Host "creating virtual environment with $Python"
+    # $Python may be a launcher invocation ("py -3.12") or a full path.
+    $parts = $Python.Split(" ", 2)
+    $exe = $parts[0]
+    $rest = if ($parts.Count -gt 1) { $parts[1].Split(" ") } else { @() }
+    Invoke-Native $exe (@($rest) + @("-m", "venv", $venv))
+}
+if (-not (Test-Path $py)) {
+    throw "Could not create a virtual environment with '$Python'. Pass -Python with a working interpreter, e.g. -Python 'C:\Python314\python.exe'."
+}
 Write-Host "installing requirements (wheels only, no compiler needed)"
-& $py -m pip install --quiet --upgrade pip | Out-Null
-& $py -m pip install --quiet -r (Join-Path $src "requirements.txt")
+Invoke-Native $py @("-m", "pip", "install", "--quiet", "--upgrade", "pip")
+Invoke-Native $py @("-m", "pip", "install", "--quiet", "-r", (Join-Path $src "requirements.txt"))
 Write-Host "  dependencies installed" -ForegroundColor Green
 
 # --- settings ---------------------------------------------------------------
@@ -122,7 +192,7 @@ Start-Process -FilePath $py -ArgumentList "-m", "searx.webapp" `
     -WorkingDirectory $src -WindowStyle Hidden `
     -RedirectStandardError $log -RedirectStandardOutput "$log.out"
 
-Start-Sleep -Seconds 12
+Start-Sleep -Seconds 20
 try {
     $probe = Invoke-RestMethod "http://127.0.0.1:$Port/search?q=test&format=json" -TimeoutSec 30
     Write-Host "`nSearXNG is answering: $($probe.results.Count) results for 'test'" -ForegroundColor Green
