@@ -18,7 +18,8 @@ def load_fixture() -> dict[str, Any]:
 
 def test_recorded_fixture_reports_engine_outage_truthfully() -> None:
     """The recorded fixture IS a degraded response: 4 engines unresponsive,
-    only google cse answering. searchMeta must say so."""
+    only google cse answering. searchMeta must say so — the coverage floor
+    catches it even though sufficiency keeps the score at 0.6."""
     raw = load_fixture()
     blocks = normalize_search(raw, num=10)
     meta = build_search_meta(raw, blocks, expected_count=10, settings=SETTINGS)
@@ -28,9 +29,10 @@ def test_recorded_fixture_reports_engine_outage_truthfully() -> None:
     assert meta["engineCoverage"] == 0.2
     assert meta["resultCount"] == 10
     assert meta["cached"] is False
-    # coverage 0.2*0.5 + sufficiency 1.0*0.5 = 0.6 -> above default threshold
+    # coverage 0.2*0.5 + sufficiency 1.0*0.5 = 0.6 -> above score threshold,
+    # but coverage 0.2 < floor 0.4 -> degraded regardless
     assert meta["qualityScore"] == 0.6
-    assert meta["degraded"] is False
+    assert meta["degraded"] is True
 
 
 def test_thin_response_is_degraded() -> None:
@@ -92,6 +94,43 @@ def test_duplicates_lower_the_score() -> None:
     assert meta["duplicateRate"] == 0.5
     # 1.0*0.5 + 1.0*0.5 - 0.5*0.3 = 0.85
     assert meta["qualityScore"] == 0.85
+
+
+def test_coverage_floor_marks_degraded_despite_full_results() -> None:
+    """Sufficiency must not mask engine collapse (the CEO-of-TNB case)."""
+    raw = {
+        "results": [
+            {"title": f"t{i}", "url": f"https://x/{i}", "engines": ["google cse"]}
+            for i in range(10)
+        ],
+        "unresponsive_engines": [[e, "err"] for e in ["a", "b", "c", "d"]],
+    }
+    blocks = normalize_search(raw, num=10)
+    meta = build_search_meta(raw, blocks, expected_count=10, settings=SETTINGS)
+    assert meta["qualityScore"] >= 0.5  # score alone would pass
+    assert meta["degraded"] is True     # floor catches coverage 0.2
+
+
+def test_coverage_floor_can_be_disabled() -> None:
+    no_floor = Settings(_env_file=None, quality_coverage_floor=0)
+    raw = load_fixture()
+    blocks = normalize_search(raw, num=10)
+    meta = build_search_meta(raw, blocks, expected_count=10, settings=no_floor)
+    assert meta["degraded"] is False  # score 0.6 above threshold, no floor
+
+
+def test_good_coverage_is_not_degraded() -> None:
+    raw = {
+        "results": [
+            {"title": f"t{i}", "url": f"https://x/{i}", "engines": ["google", "bing"]}
+            for i in range(10)
+        ],
+        "unresponsive_engines": [["brave", "err"]],
+    }
+    blocks = normalize_search(raw, num=10)
+    meta = build_search_meta(raw, blocks, expected_count=10, settings=SETTINGS)
+    assert meta["engineCoverage"] == round(2 / 3, 3)
+    assert meta["degraded"] is False
 
 
 def test_threshold_is_configurable() -> None:

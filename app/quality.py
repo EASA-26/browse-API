@@ -72,6 +72,12 @@ def build_search_meta(
     )
     score = round(max(0.0, min(1.0, score)), 3)
 
+    # Sufficiency must not mask engine collapse: many results from one
+    # engine is still a degraded search (the coverage floor catches it).
+    degraded = score < settings.quality_degraded_threshold
+    if settings.quality_coverage_floor > 0 and coverage < settings.quality_coverage_floor:
+        degraded = True
+
     return {
         "enginesQueried": len(queried),
         "enginesResponded": len(responded),
@@ -80,5 +86,5 @@ def build_search_meta(
         "duplicateRate": dup_rate,
         "qualityScore": score,
         "cached": False,
-        "degraded": score < settings.quality_degraded_threshold,
+        "degraded": degraded,
     }

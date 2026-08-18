@@ -45,6 +45,9 @@ class SearchMeta(BaseModel):
     qualityScore: float
     cached: bool = False
     degraded: bool
+    rewrittenQuery: str | None = Field(
+        None, description="keyword rewrite actually sent to the search backend"
+    )
 
 
 class BaseSearchResponse(BaseModel):

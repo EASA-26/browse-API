@@ -228,7 +228,9 @@ commercial serves places/shopping/scholar/patents (501 until configured).
 | `QUALITY_WEIGHT_SUFFICIENCY` | `0.5` | Weight of resultCount/expected |
 | `QUALITY_WEIGHT_DUPLICATES` | `0.3` | Penalty weight of duplicateRate |
 | `QUALITY_DEGRADED_THRESHOLD` | `0.5` | Score below this sets `degraded: true` |
+| `QUALITY_COVERAGE_FLOOR` | `0.4` | Coverage below this is degraded regardless of score (sufficiency must not mask engine collapse); `0` disables |
 | `QUALITY_FALLTHROUGH` | `true` | Degraded GenXNG responses retry via commercial |
+| `QUERY_REWRITE` | `true` | Rewrite NL questions into keyword queries for GenXNG (`searchMeta.rewrittenQuery` reports what was sent) |
 
 ### Governance and logging
 
@@ -363,7 +365,20 @@ sufficiency    = min(resultCount / num, 1)
 duplicateRate  = 1 - unique(normalized URLs) / total
 qualityScore   = Wc*coverage + Ws*sufficiency - Wd*duplicateRate   (clamped 0..1)
 degraded       = qualityScore < QUALITY_DEGRADED_THRESHOLD
+                 or engineCoverage < QUALITY_COVERAGE_FLOOR
 ```
+
+The coverage floor exists because sufficiency masks engine collapse: ten
+results from a single surviving engine is still a degraded search.
+
+**Query rewriting**: metasearch ranks keyword queries far better than
+natural-language questions, so questions are heuristically rewritten before
+GenXNG ("who is the ceo of TNB in 2017" → "ceo TNB 2017"; interrogative and
+function words dropped, nothing invented). Keyword queries pass verbatim,
+the commercial provider always receives the original query, and
+`searchMeta.rewrittenQuery` reports what was actually sent. RAG consumers
+doing their own LLM-based reformulation (recommended) can set
+`QUERY_REWRITE=false`.
 
 `enginesQueried/Responded` come from the raw engine attribution and
 `unresponsive_engines` data. `cached: true` marks cache-served responses.

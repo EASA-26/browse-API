@@ -16,6 +16,7 @@ from app.engine_health import get_engine_monitor
 from app.pacing import OutboundPacer, OutboundSaturatedError
 from app.providers.base import ProviderError, SearchProvider, UnsupportedVerticalError
 from app.quality import build_search_meta
+from app.query_rewrite import rewrite_query
 from app.schemas import SearchRequest
 
 logger = logging.getLogger(__name__)
@@ -228,8 +229,11 @@ class SearXNGProvider(SearchProvider):
         if category is None:
             raise UnsupportedVerticalError(f"genxng provider does not serve '{vertical}'")
 
+        # Metasearch ranks keyword queries far better than natural-language
+        # questions; rewrite the latter (searchMeta reports what was sent).
+        rewritten = rewrite_query(request.q) if self._settings.query_rewrite else None
         params: dict[str, str | int] = {
-            "q": request.q,
+            "q": rewritten or request.q,
             "format": "json",
             "pageno": request.page,
             "language": request.hl,
@@ -245,7 +249,10 @@ class SearXNGProvider(SearchProvider):
 
         raw = await self._get_json("/search", params)
         blocks = NORMALIZERS[vertical](raw, request.num)
-        blocks["searchMeta"] = build_search_meta(raw, blocks, request.num, self._settings)
+        meta = build_search_meta(raw, blocks, request.num, self._settings)
+        if rewritten is not None:
+            meta["rewrittenQuery"] = rewritten
+        blocks["searchMeta"] = meta
         return blocks
 
     async def aclose(self) -> None:

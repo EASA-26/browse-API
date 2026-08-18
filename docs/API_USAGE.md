@@ -208,9 +208,15 @@ trust the status code**:
   "duplicateRate": 0.0,
   "qualityScore": 0.41,     // weighted 0..1 (coverage + sufficiency - dupes)
   "cached": false,          // true when served from the response cache
-  "degraded": true          // qualityScore below the configured threshold
-}
+  "degraded": true,         // low score OR engine coverage below the floor
+  "rewrittenQuery": "ceo TNB 2017"  // present when your NL question was
+}                           //  rewritten into keywords for the backend
 ```
+
+Tip: keyword queries retrieve better than full questions. The API rewrites
+obvious questions automatically (see `rewrittenQuery`), but a RAG pipeline
+gets the best results by having its LLM reformulate the user's question
+into 1–2 keyword queries before calling `/search`.
 
 RAG pipelines should treat `degraded: true` as "consider a fallback source or
 tell the user context is thin". The block is absent on commercial-served

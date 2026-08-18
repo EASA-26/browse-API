@@ -88,10 +88,19 @@ class Settings(BaseSettings):
     quality_weight_sufficiency: float = 0.5
     quality_weight_duplicates: float = 0.3
     quality_degraded_threshold: float = 0.5
+    # Engine coverage below this floor marks the response degraded even when
+    # plenty of results came back (sufficiency must not mask engine collapse).
+    # 0 disables the floor.
+    quality_coverage_floor: float = 0.4
 
     # Quality fall-through: when a genxng response is degraded and the
     # commercial provider is configured, serve the commercial result instead.
     quality_fallthrough: bool = True
+
+    # Rewrite natural-language questions into keyword queries before genxng
+    # (metasearch ranks keywords far better than questions). Disable when
+    # consumers reformulate queries themselves.
+    query_rewrite: bool = True
 
     # Outbound pacing toward the genxng backend (the egress-facing traffic):
     # consumer spikes queue and smooth instead of bursting through the proxy.
