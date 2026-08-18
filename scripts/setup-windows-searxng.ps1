@@ -162,6 +162,18 @@ Invoke-Native $py @("-m", "pip", "install", "--quiet", "-r", (Join-Path $src "re
 Write-Host "  dependencies installed" -ForegroundColor Green
 
 # --- settings ---------------------------------------------------------------
+# The repo's own searxng/settings.yml is the tuned one: it carries the
+# engine-probe block, so the engines measured to work on this egress (bing,
+# notably) are enabled there and regenerate with scripts/engine_probe.py.
+# Native mode reads that file directly rather than keeping a second, staler
+# copy -- a `git pull` then updates the search backend too.
+if (-not $SettingsPath) {
+    $repoSettings = Join-Path $PSScriptRoot "..\searxng\settings.yml"
+    if (Test-Path $repoSettings) {
+        $SettingsPath = (Resolve-Path $repoSettings).Path
+        Write-Host "  using the repo's tuned settings: $SettingsPath" -ForegroundColor Green
+    }
+}
 if (-not $SettingsPath) {
     $SettingsPath = Join-Path $Root "settings.yml"
     if (-not (Test-Path $SettingsPath)) {
@@ -188,6 +200,14 @@ Write-Host "starting SearXNG on 127.0.0.1:$Port"
 $env:SEARXNG_SETTINGS_PATH = $SettingsPath
 $env:SEARXNG_BIND_ADDRESS = "127.0.0.1"
 $env:SEARXNG_PORT = "$Port"
+# The repo's settings.yml takes its secret from the environment, the way
+# docker-compose supplies it. Generated once and kept, so restarts do not
+# invalidate anything that outlives them.
+$secretFile = Join-Path $Root "secret.txt"
+if (-not (Test-Path $secretFile)) {
+    Set-Content -Path $secretFile -Value ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')) -Encoding ascii
+}
+$env:SEARXNG_SECRET = (Get-Content $secretFile -Raw).Trim()
 Start-Process -FilePath $py -ArgumentList "-m", "searx.webapp" `
     -WorkingDirectory $src -WindowStyle Hidden `
     -RedirectStandardError $log -RedirectStandardOutput "$log.out"
