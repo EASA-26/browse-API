@@ -31,6 +31,14 @@ foreach ($required in @($python, $src, $settings)) {
     }
 }
 
+# Trust what Windows trusts. searx is started with -m, so there is no entry
+# point of ours to run first; sitecustomize is imported by the site module at
+# interpreter startup, which is early enough. Without this the proxy's CA is
+# unknown to certifi, engines fail to initialise, and the ones that fail never
+# respond -- which is what drops engine coverage below the floor and sends
+# questions to the paid provider.
+$env:PYTHONPATH = Join-Path $PSScriptRoot 'searxng-site'
+
 $env:SEARXNG_SETTINGS_PATH = $settings
 $env:SEARXNG_BIND_ADDRESS = '127.0.0.1'
 $env:SEARXNG_PORT = '8082'
