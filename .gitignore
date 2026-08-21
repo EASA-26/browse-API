@@ -15,3 +15,9 @@ native-test/
 *.db-shm
 *.db-wal
 docker-compose.override.yml
+
+# The launcher writes here; the scheduler discards anything it does not.
+browse-api.log
+uvicorn*.log
+uvicorn*.out
+tlsprobe.py

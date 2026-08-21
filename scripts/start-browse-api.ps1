@@ -38,5 +38,25 @@ if (-not $env:COMMERCIAL_API_KEY) {
     Write-Warning "No SERPAPI_KEY in $envFile -- the quality fall-through cannot fire."
 }
 
+# Where this run can be read afterwards. Started by the scheduler, nobody is
+# watching the console, and a task that fails on line one looks exactly like a
+# task that ran perfectly -- State goes back to Ready either way.
+$log = Join-Path $root 'browse-api.log'
+$stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+$keyState = if ($env:COMMERCIAL_API_KEY) {
+    'commercial key loaded (' + $env:COMMERCIAL_API_KEY.Length + ' characters)'
+} else {
+    'NO COMMERCIAL KEY -- the fall-through cannot fire'
+}
+Add-Content -Path $log -Value ''
+Add-Content -Path $log -Value "==== $stamp starting: $keyState ===="
+
 Set-Location $root
-& (Join-Path $root '.venv\Scripts\python.exe') -m uvicorn app.main:app --host 127.0.0.1 --port 8010
+
+# Continue, not Stop, from here on. uvicorn writes its ordinary log lines to
+# stderr, and PowerShell turns a native command's stderr into error records:
+# under Stop the first log line the server writes would kill the server.
+$ErrorActionPreference = 'Continue'
+
+& (Join-Path $root '.venv\Scripts\python.exe') -m uvicorn app.main:app --host 127.0.0.1 --port 8010 2>&1 |
+    Tee-Object -FilePath $log -Append
