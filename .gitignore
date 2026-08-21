@@ -21,3 +21,7 @@ browse-api.log
 uvicorn*.log
 uvicorn*.out
 tlsprobe.py
+t.out
+t.err
+manual.out
+manual.err
