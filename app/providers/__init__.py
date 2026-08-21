@@ -11,6 +11,7 @@ from app.providers.commercial import CommercialProvider
 from app.providers.direct_scrape import DirectScrapeProvider
 from app.providers.resilience import CircuitBreaker, ResilientProvider
 from app.providers.searxng import SearXNGProvider
+from app.providers.serpapi import SerpApiProvider
 from app.secrets import get_secret
 
 __all__ = [
@@ -29,6 +30,12 @@ def _build(name: ProviderName) -> SearchProvider:
         return SearXNGProvider(settings)
     if name is ProviderName.COMMERCIAL:
         api_key = get_secret("COMMERCIAL_API_KEY")
+        if settings.commercial_format == "serpapi":
+            if not api_key:
+                raise ProviderNotConfiguredError(
+                    "serpapi provider requires COMMERCIAL_API_KEY (env or Vault)"
+                )
+            return SerpApiProvider(settings, api_key)
         if not settings.commercial_base_url or not api_key:
             raise ProviderNotConfiguredError(
                 "commercial provider requires COMMERCIAL_BASE_URL and "

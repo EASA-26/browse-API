@@ -231,6 +231,8 @@ commercial serves places/shopping/scholar/patents (501 until configured).
 | `QUALITY_COVERAGE_FLOOR` | `0.4` | Coverage below this is degraded regardless of score (sufficiency must not mask engine collapse); `0` disables |
 | `QUALITY_FALLTHROUGH` | `true` | Degraded GenXNG responses retry via commercial |
 | `QUERY_REWRITE` | `true` | Rewrite NL questions into keyword queries for GenXNG (`searchMeta.rewrittenQuery` reports what was sent) |
+| `RERANK` | `true` | Re-rank GenXNG search/news results by IDF-weighted query relevance before slicing to `num` — floats entity-specific answers above generically popular pages |
+| `COMMERCIAL_FORMAT` | `serper` | Commercial wire format: `serper` (Gen-compatible POST) or `serpapi` (serpapi.com GET; serves /search + /news, key only, no BASE_URL needed) |
 
 ### Governance and logging
 
@@ -379,6 +381,14 @@ the commercial provider always receives the original query, and
 `searchMeta.rewrittenQuery` reports what was actually sent. RAG consumers
 doing their own LLM-based reformulation (recommended) can set
 `QUERY_REWRITE=false`.
+
+**Relevance re-ranking**: the metasearch merge ranks by engine agreement,
+which buries specific answers under generically popular pages (in the
+CEO-of-TNB incident the answer sat at positions 10–24, below what RAG
+consumers read). Before slicing to `num`, search/news results are re-ranked
+by IDF-weighted query-term relevance: rare, informative terms ("tnb",
+"2017") outweigh generic ones ("ceo"), and title matches outweigh snippet
+matches. Deterministic; ties keep engine order; `RERANK=false` disables.
 
 `enginesQueried/Responded` come from the raw engine attribution and
 `unresponsive_engines` data. `cached: true` marks cache-served responses.

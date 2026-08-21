@@ -102,6 +102,14 @@ class Settings(BaseSettings):
     # consumers reformulate queries themselves.
     query_rewrite: bool = True
 
+    # Re-rank genxng search/news results by IDF-weighted query relevance
+    # before slicing to num (floats specific answers above generic pages).
+    rerank: bool = True
+
+    # Wire format of the commercial provider: "serper" (Gen-compatible POST
+    # JSON) or "serpapi" (serpapi.com GET format).
+    commercial_format: str = "serper"
+
     # Outbound pacing toward the genxng backend (the egress-facing traffic):
     # consumer spikes queue and smooth instead of bursting through the proxy.
     # Set from the measured ceiling (scripts/ceiling_probe.py) with headroom;

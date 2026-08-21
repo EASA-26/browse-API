@@ -17,6 +17,7 @@ from app.pacing import OutboundPacer, OutboundSaturatedError
 from app.providers.base import ProviderError, SearchProvider, UnsupportedVerticalError
 from app.quality import build_search_meta
 from app.query_rewrite import rewrite_query
+from app.rerank import rerank_results
 from app.schemas import SearchRequest
 
 logger = logging.getLogger(__name__)
@@ -248,6 +249,12 @@ class SearXNGProvider(SearchProvider):
             params["engines"] = ",".join(healthy)
 
         raw = await self._get_json("/search", params)
+        # Re-rank BEFORE slicing to num: the metasearch merge buries specific
+        # answers under generically popular pages (see app/rerank.py).
+        if self._settings.rerank and vertical in (Vertical.SEARCH, Vertical.NEWS):
+            raw["results"] = rerank_results(
+                raw.get("results", []), str(params["q"])
+            )
         blocks = NORMALIZERS[vertical](raw, request.num)
         meta = build_search_meta(raw, blocks, request.num, self._settings)
         if rewritten is not None:
