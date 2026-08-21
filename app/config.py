@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     # before slicing to num (floats specific answers above generic pages).
     rerank: bool = True
 
+    # Verify outbound TLS against the OS trust store rather than certifi.
+    # Required wherever a proxy intercepts TLS and re-signs it: the machine
+    # trusts the proxy's CA and certifi does not. See app/tls.py.
+    system_trust_store: bool = True
+
     # Wire format of the commercial provider: "serper" (Gen-compatible POST
     # JSON) or "serpapi" (serpapi.com GET format).
     commercial_format: str = "serper"

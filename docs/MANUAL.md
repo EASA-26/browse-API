@@ -231,6 +231,7 @@ commercial serves places/shopping/scholar/patents (501 until configured).
 | `QUALITY_COVERAGE_FLOOR` | `0.4` | Coverage below this is degraded regardless of score (sufficiency must not mask engine collapse); `0` disables |
 | `QUALITY_FALLTHROUGH` | `true` | Degraded GenXNG responses retry via commercial |
 | `QUERY_REWRITE` | `true` | Rewrite NL questions into keyword queries for GenXNG (`searchMeta.rewrittenQuery` reports what was sent) |
+| `SYSTEM_TRUST_STORE` | `true` | Verify outbound TLS against the operating system's trust store rather than certifi — required wherever a proxy intercepts TLS and re-signs it with a corporate CA, which certifi has never heard of. Needs the `truststore` package; without it verification falls back to certifi rather than being weakened |
 | `RERANK` | `true` | Re-rank GenXNG search/news results by IDF-weighted query relevance before slicing to `num` — floats entity-specific answers above generically popular pages |
 | `COMMERCIAL_FORMAT` | `serper` | Commercial wire format: `serper` (Gen-compatible POST) or `serpapi` (serpapi.com GET; serves /search + /news, key only, no BASE_URL needed) |
 

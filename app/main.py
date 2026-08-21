@@ -23,6 +23,7 @@ from app.engine_health import get_engine_monitor, probe_loop
 from app.logging_config import setup_logging
 from app.policy import PolicyBlockedError
 from app.ratelimit import MemoryRateLimiter
+from app.tls import trust_system_certificates
 
 setup_logging(get_settings().log_level)
 
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    # Before any provider builds a client. Done here rather than at import so
+    # the test suite, which never opens a real socket, is unaffected.
+    if settings.system_trust_store:
+        trust_system_certificates()
     db = create_database(settings.database_url)
     await db.connect()
     app.state.db = db
